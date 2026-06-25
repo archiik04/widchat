@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
+import {
   Search, Bell, Settings, Menu,
-  LayoutDashboard, Users, BarChart3, GraduationCap, 
+  LayoutDashboard, Users, BarChart3, GraduationCap,
   FileText, FolderOpen, LogOut,
   Zap, Send,
   BookOpen, Award
@@ -35,15 +35,7 @@ function CountUp({ end, duration = 800 }: { end: number; duration?: number }) {
   return <>{count}</>;
 }
 
-// Terminal-style Typing Cursor Component
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-1 text-[13px] text-gray-400 font-mono font-medium">
-      <span>Thinking</span>
-      <span className="w-1.5 h-3.5 bg-gray-400 inline-block cursor-blink" />
-    </div>
-  );
-}
+
 
 // Helper Functions for Widget Styling & Content
 const getWidgetEmoji = (id: string | null) => {
@@ -90,15 +82,279 @@ const getUserQuestion = (id: string) => {
   }
 };
 
+interface Message {
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: number;
+  isInsightCard?: boolean;
+}
+
+interface WidgetSession {
+  hasInitialized: boolean;
+  conversation: Message[];
+  inputValue: string;
+  scrollPosition: number;
+  timestamp: number;
+}
+
+const DEFAULT_SESSIONS: Record<string, WidgetSession> = {
+  progress: {
+    hasInitialized: false,
+    conversation: [],
+    inputValue: '',
+    scrollPosition: 0,
+    timestamp: Date.now()
+  },
+  activity: {
+    hasInitialized: false,
+    conversation: [],
+    inputValue: '',
+    scrollPosition: 0,
+    timestamp: Date.now()
+  },
+  skills: {
+    hasInitialized: false,
+    conversation: [],
+    inputValue: '',
+    scrollPosition: 0,
+    timestamp: Date.now()
+  },
+  engagement: {
+    hasInitialized: false,
+    conversation: [],
+    inputValue: '',
+    scrollPosition: 0,
+    timestamp: Date.now()
+  }
+};
+
+const getAiResponseForQuery = (widgetId: string, query: string): string => {
+  const q = query.toLowerCase();
+  const widgetLabel = getWidgetLabel(widgetId);
+
+  if (widgetId === 'progress') {
+    if (q.includes('why') || q.includes('drop') || q.includes('decrease') || q.includes('dropped')) {
+      return "Based on the database records, the 4% drop in Learning Progress this week is heavily concentrated in Module 6. Learners are spending an average of 48 minutes stuck on the interactive coding lab. I suggest simplifying the module guidelines or adding inline helper tips.";
+    }
+    if (q.includes('recommend') || q.includes('suggest') || q.includes('how to') || q.includes('improve')) {
+      return "Here are the top recommendations for Learning Progress:\n1. Update Module 6 interactive diagrams to be mobile-friendly.\n2. Enable automatic nudge notifications for learners inactive for more than 3 days.\n3. Request feedback directly from the cohort manager.";
+    }
+    return `I am monitoring ${widgetLabel}. You currently have an 84% completion rate. Is there a specific cohort, module, or trend line you would like to drill down into?`;
+  }
+
+  if (widgetId === 'activity') {
+    if (q.includes('why') || q.includes('drop') || q.includes('time') || q.includes('losing')) {
+      return "Course Activity metrics show that engagement peaks around 11:00 AM but drops significantly after 12:00 PM. Mobile users exit the platform early, which accounts for the 8% decline. I recommend optimizing the video lecture resolution for mobile web views.";
+    }
+    return `Course Activity is currently at 142 active learners with a 24-minute average session. Let me know if you want me to generate an activity report or notify the course owners.`;
+  }
+
+  if (widgetId === 'skills') {
+    if (q.includes('gap') || q.includes('need') || q.includes('attention') || q.includes('immediate')) {
+      return "Our priority gaps indicate a need for Senior Rust & System Architecture expertise. Additionally, Framer Motion training is lagging at 45% completion for design teams. I suggest approving the L&D budget for interactive workshops.";
+    }
+    return `Skill Development analysis shows 148 new certifications and 12 priority gaps. Would you like to review the mentorship program suggestions?`;
+  }
+
+  if (widgetId === 'engagement') {
+    if (q.includes('retention') || q.includes('improve') || q.includes('why') || q.includes('decrease') || q.includes('decreased')) {
+      return "Employee Engagement is strong at 93%. Our analytics show that practical lab environments retain users 22% longer than standard lectures. Implementing streak badges for continuous learning is highly recommended.";
+    }
+    return `Engagement score is at 93% with an average of 8.4 learning days per employee. Let me know if you would like me to list the top engaged teams or design streak rewards.`;
+  }
+
+  return `I've analyzed your question regarding ${widgetLabel}. Let me know how I can assist you further with this data dashboard context.`;
+};
+
 export default function App() {
   const [activeMenu, setActiveMenu] = useState('Learning Analytics');
-  const [activeWidget, setActiveWidget] = useState<string | null>(null);
   const [hoveredWidget, setHoveredWidget] = useState<string | null>(null);
-  const [aiState, setAiState] = useState<'empty' | 'flying' | 'syncing' | 'thinking' | 'generating' | 'analyzed'>('empty');
-  const [inputText, setInputText] = useState('');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [selectedSearchCategory, setSelectedSearchCategory] = useState('Courses');
-  
+
+  // Persistent States
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState<boolean>(() => {
+    const stored = localStorage.getItem('widchat_is_ai_panel_open');
+    return stored ? JSON.parse(stored) : false;
+  });
+
+  const [activeWidget, setActiveWidget] = useState<string | null>(() => {
+    return localStorage.getItem('widchat_active_widget') || null;
+  });
+
+  const [sessions, setSessions] = useState<Record<string, WidgetSession>>(() => {
+    const stored = localStorage.getItem('widchat_ai_sessions');
+    return stored ? JSON.parse(stored) : DEFAULT_SESSIONS;
+  });
+
+  const [aiState, setAiState] = useState<'empty' | 'flying' | 'syncing' | 'thinking' | 'generating' | 'analyzed'>(() => {
+    const active = localStorage.getItem('widchat_active_widget');
+    if (active) {
+      const sessionsData = localStorage.getItem('widchat_ai_sessions');
+      if (sessionsData) {
+        try {
+          const parsed = JSON.parse(sessionsData);
+          if (parsed[active]?.hasInitialized) {
+            return 'analyzed';
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return 'empty';
+  });
+
+  const [inputText, setInputText] = useState(() => {
+    const active = localStorage.getItem('widchat_active_widget');
+    if (active) {
+      const sessionsData = localStorage.getItem('widchat_ai_sessions');
+      if (sessionsData) {
+        try {
+          const parsed = JSON.parse(sessionsData);
+          return parsed[active]?.inputValue || '';
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    return '';
+  });
+
+  const [isAiTyping, setIsAiTyping] = useState(false);
+
+  // Refs for Scroll Position & Timeouts
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollTimeoutRef = useRef<number | null>(null);
+
+  // Synchronize state changes to localStorage
+  useEffect(() => {
+    if (activeWidget) {
+      localStorage.setItem('widchat_active_widget', activeWidget);
+    } else {
+      localStorage.removeItem('widchat_active_widget');
+    }
+  }, [activeWidget]);
+
+  useEffect(() => {
+    localStorage.setItem('widchat_is_ai_panel_open', JSON.stringify(isAiPanelOpen));
+  }, [isAiPanelOpen]);
+
+  useEffect(() => {
+    localStorage.setItem('widchat_ai_sessions', JSON.stringify(sessions));
+  }, [sessions]);
+
+  // Sync inputText draft when active widget changes
+  useEffect(() => {
+    if (activeWidget) {
+      setInputText(sessions[activeWidget]?.inputValue || '');
+    } else {
+      setInputText('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWidget]);
+
+  // Restore scroll position when active widget changes, panel opens, or state is re-analyzed
+  useEffect(() => {
+    if (activeWidget && isAiPanelOpen && aiState === 'analyzed' && chatContainerRef.current) {
+      const session = sessions[activeWidget];
+      if (session) {
+        const container = chatContainerRef.current;
+        const savedPos = session.scrollPosition;
+        const timer = setTimeout(() => {
+          if (container) {
+            container.scrollTop = savedPos;
+          }
+        }, 50);
+        return () => clearTimeout(timer);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWidget, isAiPanelOpen, aiState]);
+
+  // Clean scroll timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        window.clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleInputChange = (val: string) => {
+    setInputText(val);
+    if (activeWidget) {
+      setSessions(prev => ({
+        ...prev,
+        [activeWidget]: {
+          ...prev[activeWidget],
+          inputValue: val
+        }
+      }));
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const scrollTop = e.currentTarget.scrollTop;
+    if (!activeWidget) return;
+
+    if (scrollTimeoutRef.current) {
+      window.clearTimeout(scrollTimeoutRef.current);
+    }
+
+    scrollTimeoutRef.current = window.setTimeout(() => {
+      setSessions(prev => {
+        const currentSession = prev[activeWidget];
+        if (!currentSession || currentSession.scrollPosition === scrollTop) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [activeWidget]: {
+            ...currentSession,
+            scrollPosition: scrollTop
+          }
+        };
+      });
+    }, 150);
+  };
+
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  const completeInitialization = (widgetId: string) => {
+    setSessions(prev => {
+      const updated = {
+        ...prev,
+        [widgetId]: {
+          ...prev[widgetId],
+          hasInitialized: true,
+          conversation: [
+            {
+              sender: 'user' as const,
+              text: getUserQuestion(widgetId),
+              timestamp: Date.now()
+            },
+            {
+              sender: 'ai' as const,
+              text: `Here is the active ${getWidgetLabel(widgetId)} context:`,
+              timestamp: Date.now(),
+              isInsightCard: true
+            }
+          ]
+        }
+      };
+      return updated;
+    });
+    setAiState('analyzed');
+  };
+
   // Flying Chip Overlay Coordinates
   const [animatingChip, setAnimatingChip] = useState<{
     label: string;
@@ -113,21 +369,35 @@ export default function App() {
 
   // Widget Click Actions
   const handleWidgetClick = (widgetId: string) => {
-    if (activeWidget === widgetId && aiState !== 'empty') return;
-    
+    if (activeWidget === widgetId) {
+      setIsAiPanelOpen(true);
+      return;
+    }
+
+    // Check if the session is already initialized
+    const session = sessions[widgetId];
+    if (session && session.hasInitialized) {
+      setActiveWidget(widgetId);
+      setIsAiPanelOpen(true);
+      setAiState('analyzed');
+      setInputText(session.inputValue || '');
+      return;
+    }
+
     // Set target state to flying
     setActiveWidget(widgetId);
+    setIsAiPanelOpen(true);
     setAiState('flying');
-    
+
     // Schedule rect calculation on the next DOM loop
     setTimeout(() => {
       const sourceEl = document.getElementById(`widget-${widgetId}`);
       const targetEl = document.getElementById('ai-chip-target');
-      
+
       if (sourceEl && targetEl) {
         const sourceRect = sourceEl.getBoundingClientRect();
         const targetRect = targetEl.getBoundingClientRect();
-        
+
         setAnimatingChip({
           label: getWidgetLabel(widgetId),
           emoji: getWidgetEmoji(widgetId),
@@ -146,7 +416,7 @@ export default function App() {
           setTimeout(() => {
             setAiState('generating');
             setTimeout(() => {
-              setAiState('analyzed');
+              completeInitialization(widgetId);
             }, 350);
           }, 350);
         }, 300);
@@ -154,12 +424,74 @@ export default function App() {
     }, 40);
   };
 
-  // Reset to original welcome onboarding state
-  const handleResetConversation = () => {
-    setAiState('empty');
-    setActiveWidget(null);
-    setHoveredWidget(null);
+  const handleSendMessage = () => {
+    const userMsgText = inputText.trim();
+    if (!userMsgText || !activeWidget) return;
+
+    const userMessage: Message = {
+      sender: 'user',
+      text: userMsgText,
+      timestamp: Date.now()
+    };
+
+    setSessions(prev => {
+      const currentSession = prev[activeWidget];
+      const updatedSession = {
+        ...currentSession,
+        conversation: [...currentSession.conversation, userMessage],
+        inputValue: ''
+      };
+      return {
+        ...prev,
+        [activeWidget]: updatedSession
+      };
+    });
+
     setInputText('');
+
+    setIsAiTyping(true);
+    setTimeout(() => {
+      scrollToBottom();
+    }, 50);
+
+    setTimeout(() => {
+      const aiText = getAiResponseForQuery(activeWidget, userMsgText);
+      const aiMessage: Message = {
+        sender: 'ai',
+        text: aiText,
+        timestamp: Date.now()
+      };
+
+      setSessions(prev => {
+        const currentSession = prev[activeWidget];
+        const updatedSession = {
+          ...currentSession,
+          conversation: [...currentSession.conversation, aiMessage]
+        };
+        return {
+          ...prev,
+          [activeWidget]: updatedSession
+        };
+      });
+
+      setIsAiTyping(false);
+      setTimeout(() => {
+        scrollToBottom();
+      }, 50);
+    }, 1200);
+  };
+
+  // Reset to original welcome onboarding state (Clear Context)
+  const handleResetConversation = () => {
+    localStorage.removeItem('widchat_active_widget');
+    localStorage.removeItem('widchat_is_ai_panel_open');
+    localStorage.removeItem('widchat_ai_sessions');
+
+    setActiveWidget(null);
+    setIsAiPanelOpen(false);
+    setAiState('empty');
+    setInputText('');
+    setSessions(DEFAULT_SESSIONS);
     setAnimatingChip(null);
   };
 
@@ -198,11 +530,11 @@ export default function App() {
 
   const cardItemVariants = {
     hidden: { opacity: 0, y: 15, scale: 0.98 },
-    show: { 
-      opacity: 1, 
-      y: 0, 
-      scale: 1, 
-      transition: { type: "spring" as const, stiffness: 160, damping: 18 } 
+    show: {
+      opacity: 1,
+      y: 0,
+      scale: 1,
+      transition: { type: "spring" as const, stiffness: 160, damping: 18 }
     }
   } as const;
 
@@ -221,7 +553,7 @@ export default function App() {
               </span>
               <span className="text-[10px] font-bold text-gray-400">ID: LRN-PRO-84</span>
             </motion.div>
-            
+
             <motion.div variants={cardItemVariants} className="grid grid-cols-3 gap-3 bg-white/50 p-3 rounded-[16px] border border-black/5">
               <div>
                 <span className="text-[9px] text-gray-500 font-bold block mb-0.5 uppercase">COMPLETION</span>
@@ -241,14 +573,14 @@ export default function App() {
             <motion.div variants={cardItemVariants} className="bg-white rounded-[16px] p-3 border border-[#E3DCCE]/40">
               <span className="text-[10px] font-bold text-gray-400 block mb-2">Weekly Completion Trend</span>
               <svg className="w-full h-10 overflow-visible" viewBox="0 0 250 40">
-                <motion.path 
+                <motion.path
                   initial={{ pathLength: 0 }}
                   animate={{ pathLength: 1 }}
                   transition={{ duration: 1.2, ease: "easeOut" }}
-                  d="M0,10 Q50,8 100,12 T180,30 T250,38" 
-                  fill="none" 
-                  stroke="#141414" 
-                  strokeWidth="2.5" 
+                  d="M0,10 Q50,8 100,12 T180,30 T250,38"
+                  fill="none"
+                  stroke="#141414"
+                  strokeWidth="2.5"
                 />
                 <line x1="180" y1="0" x2="180" y2="40" stroke="#FF9B54" strokeWidth="1.5" strokeDasharray="3,3" />
                 <circle cx="180" cy="30" r="3.5" fill="#141414" />
@@ -313,7 +645,7 @@ export default function App() {
               </span>
               <span className="text-[10px] font-bold text-gray-400">ID: ACT-SUM-08</span>
             </motion.div>
-            
+
             <motion.div variants={cardItemVariants} className="grid grid-cols-3 gap-3 bg-white/50 p-3 rounded-[16px] border border-black/5">
               <div>
                 <span className="text-[9px] text-gray-500 font-bold block mb-0.5 uppercase">LEARNERS</span>
@@ -333,14 +665,14 @@ export default function App() {
             <motion.div variants={cardItemVariants} className="bg-white rounded-[16px] p-3 border border-[#E3DCCE]/40">
               <span className="text-[10px] font-bold text-gray-400 block mb-2">Peak Engagement Hours</span>
               <svg className="w-full h-10 overflow-visible" viewBox="0 0 250 40">
-                <motion.path 
+                <motion.path
                   initial={{ pathLength: 0 }}
                   animate={{ pathLength: 1 }}
                   transition={{ duration: 1.2, ease: "easeOut" }}
-                  d="M0,35 Q50,20 100,5 T200,38 L250,32" 
-                  fill="none" 
-                  stroke="#141414" 
-                  strokeWidth="2.5" 
+                  d="M0,35 Q50,20 100,5 T200,38 L250,32"
+                  fill="none"
+                  stroke="#141414"
+                  strokeWidth="2.5"
                 />
                 <circle cx="100" cy="5" r="3.5" fill="#141414" />
               </svg>
@@ -410,7 +742,7 @@ export default function App() {
               </span>
               <span className="text-[10px] font-bold text-gray-400">ID: SKL-GAP-12</span>
             </motion.div>
-            
+
             <motion.div variants={cardItemVariants} className="grid grid-cols-3 gap-3 bg-white/50 p-3 rounded-[16px] border border-black/5">
               <div>
                 <span className="text-[9px] text-gray-500 font-bold block mb-0.5 uppercase">CERTIFICATIONS</span>
@@ -502,7 +834,7 @@ export default function App() {
               </span>
               <span className="text-[10px] font-bold text-gray-400">ID: ENG-TRK-08</span>
             </motion.div>
-            
+
             <motion.div variants={cardItemVariants} className="grid grid-cols-3 gap-3 bg-white/50 p-3 rounded-[16px] border border-black/5">
               <div>
                 <span className="text-[9px] text-gray-500 font-bold block mb-0.5 uppercase">ENGAGED</span>
@@ -522,14 +854,14 @@ export default function App() {
             <motion.div variants={cardItemVariants} className="bg-white rounded-[16px] p-3 border border-[#E3DCCE]/40">
               <span className="text-[10px] font-bold text-gray-400 block mb-2">Quarterly Retention Streak</span>
               <svg className="w-full h-10 overflow-visible" viewBox="0 0 250 40">
-                <motion.path 
+                <motion.path
                   initial={{ pathLength: 0 }}
                   animate={{ pathLength: 1 }}
                   transition={{ duration: 1, ease: "easeOut" }}
-                  d="M0,25 Q75,5 150,20 T250,8" 
-                  fill="none" 
-                  stroke="#141414" 
-                  strokeWidth="2.5" 
+                  d="M0,25 Q75,5 150,20 T250,8"
+                  fill="none"
+                  stroke="#141414"
+                  strokeWidth="2.5"
                 />
                 <circle cx="150" cy="20" r="3.5" fill="#141414" />
               </svg>
@@ -584,7 +916,7 @@ export default function App() {
 
   return (
     <div className="w-full h-screen bg-[#F8F4EE] flex p-6 overflow-hidden font-sans selection:bg-intellyPink/50 selection:text-intellyBlack">
-      
+
       {/* Blinking Cursor Inline Style */}
       <style>{`
         @keyframes blink {
@@ -593,6 +925,13 @@ export default function App() {
         .cursor-blink {
           animation: blink 0.8s step-start infinite;
         }
+        @keyframes premium-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        .animate-premium-spin {
+          animation: premium-spin 1.2s ease-in-out infinite;
+        }
       `}</style>
 
       {/* ========================================================
@@ -600,18 +939,18 @@ export default function App() {
          ======================================================== */}
       <motion.aside
         layout
-        animate={{ 
+        animate={{
           width: isSidebarCollapsed ? 80 : 260,
         }}
-        transition={{ 
-          type: "spring", 
-          stiffness: 200, 
-          damping: 24 
+        transition={{
+          type: "spring",
+          stiffness: 200,
+          damping: 24
         }}
         className="h-full bg-[#141414] rounded-[32px] flex flex-col justify-between p-6 text-white relative overflow-hidden shrink-0 mr-6"
       >
         <div className="absolute inset-0 opacity-5 pointer-events-none bg-gradient-to-b from-white/10 to-transparent" />
-        
+
         <div>
           {/* Logo & Toggle */}
           <div className={`flex ${isSidebarCollapsed ? 'flex-col items-center gap-4' : 'items-center justify-between'} mb-8`}>
@@ -644,12 +983,16 @@ export default function App() {
               return (
                 <button
                   key={item.name}
-                  onClick={() => setActiveMenu(item.name)}
-                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-[16px] text-[13px] font-medium transition-all ${
-                    isActive 
-                      ? 'bg-gradient-to-r from-white/10 to-white/5 text-[#F3B8D6] shadow-sm' 
+                  onClick={() => {
+                    setActiveMenu(item.name);
+                    if (item.name === 'AI Insights') {
+                      setIsAiPanelOpen(true);
+                    }
+                  }}
+                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-[16px] text-[13px] font-medium transition-all ${isActive
+                      ? 'bg-gradient-to-r from-white/10 to-white/5 text-[#F3B8D6] shadow-sm'
                       : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
+                    }`}
                   title={isSidebarCollapsed ? item.name : undefined}
                 >
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#F3B8D6]' : 'text-gray-400'}`} />
@@ -673,11 +1016,10 @@ export default function App() {
                 <button
                   key={item.name}
                   onClick={() => setActiveMenu(item.name)}
-                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-[16px] text-[13px] font-medium transition-all ${
-                    isActive 
-                      ? 'bg-gradient-to-r from-white/10 to-white/5 text-[#F3B8D6] shadow-sm' 
+                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3'} py-2.5 rounded-[16px] text-[13px] font-medium transition-all ${isActive
+                      ? 'bg-gradient-to-r from-white/10 to-white/5 text-[#F3B8D6] shadow-sm'
                       : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
+                    }`}
                   title={isSidebarCollapsed ? item.name : undefined}
                 >
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#F3B8D6]' : 'text-gray-400'}`} />
@@ -711,17 +1053,17 @@ export default function App() {
           2. CENTER PANEL (Flexible Dashboard Area)
          ======================================================== */}
       <motion.section layout className="h-full flex-1 flex flex-col overflow-y-auto pr-2 scrollbar-thin">
-        
+
         {/* Top Search Bar & Action Buttons */}
         <div className="flex items-center justify-between py-2 mb-6 gap-6">
           <div className="flex items-center gap-3 bg-white/40 backdrop-blur-md border border-[#E3DCCE]/85 rounded-full px-4 h-12 shadow-sm w-full max-w-[700px] flex-1 focus-within:border-[#141414]/30 focus-within:shadow-md transition-all">
             <div className="w-8 h-8 rounded-full bg-[#F3B8D6] flex items-center justify-center text-[#141414] shrink-0 shadow-sm">
               <Search className="w-3.5 h-3.5" />
             </div>
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder={`Search ${selectedSearchCategory.toLowerCase()}...`}
-              className="bg-transparent outline-none text-[13px] text-[#141414] placeholder-gray-400 font-medium w-full max-w-[280px] px-1 border-r border-[#E3DCCE]/60 h-full" 
+              className="bg-transparent outline-none text-[13px] text-[#141414] placeholder-gray-400 font-medium w-full max-w-[280px] px-1 border-r border-[#E3DCCE]/60 h-full"
             />
             <div className="flex items-center gap-2 pl-2 text-[13px] text-gray-500 font-medium overflow-x-auto whitespace-nowrap scrollbar-none">
               <span className="text-gray-400 text-[11px] uppercase tracking-wider font-bold">In:</span>
@@ -731,11 +1073,10 @@ export default function App() {
                   <button
                     key={category}
                     onClick={() => setSelectedSearchCategory(category)}
-                    className={`h-6 px-3 rounded-full text-[11px] font-bold shrink-0 transition-all focus:outline-none ${
-                      isCatSelected 
-                        ? 'bg-[#141414] text-white shadow-sm' 
+                    className={`h-6 px-3 rounded-full text-[11px] font-bold shrink-0 transition-all focus:outline-none ${isCatSelected
+                        ? 'bg-[#141414] text-white shadow-sm'
                         : 'bg-white/80 border border-[#E3DCCE]/80 text-gray-600 hover:bg-[#141414]/5'
-                    }`}
+                      }`}
                   >
                     {category}
                   </button>
@@ -747,7 +1088,7 @@ export default function App() {
           {/* Profile & Icon Stack */}
           <div className="flex items-center gap-3 shrink-0">
             {/* Profile Avatar (Consistent with OC pink style) */}
-            <motion.div 
+            <motion.div
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="w-10 h-10 rounded-full bg-[#F3B8D6] text-[#141414] text-[13px] font-black flex items-center justify-center cursor-pointer border border-[#E3DCCE]/80 hover:opacity-95 transition-all shadow-sm font-sans"
@@ -757,7 +1098,7 @@ export default function App() {
             </motion.div>
 
             {/* Notification Bell */}
-            <motion.button 
+            <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-gray-600 cursor-pointer border border-[#E3DCCE]/80 hover:bg-gray-50 hover:text-[#141414] transition-all shadow-sm relative focus:outline-none animate-none"
@@ -768,7 +1109,7 @@ export default function App() {
             </motion.button>
 
             {/* Settings Button */}
-            <motion.button 
+            <motion.button
               whileHover={{ scale: 1.05, rotate: 15 }}
               whileTap={{ scale: 0.95 }}
               className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-gray-600 cursor-pointer border border-[#E3DCCE]/80 hover:bg-gray-50 hover:text-[#141414] transition-all shadow-sm focus:outline-none animate-none"
@@ -789,9 +1130,9 @@ export default function App() {
 
         {/* Bento Grid (Adapts to fill space with 24px gap) */}
         <div className="grid grid-cols-12 gap-6 mb-6">
-          
+
           {/* Widget 1: Yellow Card (Learning Progress) */}
-          <motion.div 
+          <motion.div
             id="widget-progress"
             onClick={() => handleWidgetClick('progress')}
             onMouseEnter={() => setHoveredWidget('progress')}
@@ -806,13 +1147,13 @@ export default function App() {
             animate={{
               scale: activeWidget === 'progress' ? 1.02 : (hoveredWidget === 'progress' ? 1.01 : 1),
               y: activeWidget === 'progress' ? -4 : (hoveredWidget === 'progress' ? -6 : 0),
-              opacity: activeWidget 
-                ? (activeWidget === 'progress' ? 1 : 0.75) 
+              opacity: activeWidget
+                ? (activeWidget === 'progress' ? 1 : 0.75)
                 : (hoveredWidget ? (hoveredWidget === 'progress' ? 1 : 0.75) : 1),
               borderWidth: '2px',
               borderColor: (activeWidget === 'progress' || hoveredWidget === 'progress') ? '#E5C13C' : 'rgba(20, 20, 20, 0.05)',
               boxShadow: (activeWidget === 'progress' || hoveredWidget === 'progress')
-                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(247, 216, 93, 0.35)' 
+                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(247, 216, 93, 0.35)'
                 : '0 4px 6px -1px rgba(20, 20, 20, 0.02)'
             }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -821,13 +1162,13 @@ export default function App() {
             {/* Active Badge */}
             <AnimatePresence>
               {activeWidget === 'progress' && (
-                <motion.span 
+                <motion.span
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   className="absolute top-4 right-4 px-2.5 py-0.5 bg-[#141414] text-white rounded-full text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 z-20 shadow-md"
                 >
-                  <motion.span 
+                  <motion.span
                     className="w-1.5 h-1.5 rounded-full bg-[#59C28A]"
                     animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
                     transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
@@ -848,7 +1189,7 @@ export default function App() {
             <div className="absolute top-2 right-6 text-[#141414]/10 font-bold text-[140px] leading-none pointer-events-none select-none">
               %
             </div>
-            
+
             <div>
               <span className="text-[20px] font-bold block mb-4 font-sans leading-none">Learning Progress</span>
               <div className="flex gap-4">
@@ -882,7 +1223,7 @@ export default function App() {
           </motion.div>
 
           {/* Widget 2: Pink Card (Course Activity) */}
-          <motion.div 
+          <motion.div
             id="widget-activity"
             onClick={() => handleWidgetClick('activity')}
             onMouseEnter={() => setHoveredWidget('activity')}
@@ -897,13 +1238,13 @@ export default function App() {
             animate={{
               scale: activeWidget === 'activity' ? 1.02 : (hoveredWidget === 'activity' ? 1.01 : 1),
               y: activeWidget === 'activity' ? -4 : (hoveredWidget === 'activity' ? -6 : 0),
-              opacity: activeWidget 
-                ? (activeWidget === 'activity' ? 1 : 0.75) 
+              opacity: activeWidget
+                ? (activeWidget === 'activity' ? 1 : 0.75)
                 : (hoveredWidget ? (hoveredWidget === 'activity' ? 1 : 0.75) : 1),
               borderWidth: '2px',
               borderColor: (activeWidget === 'activity' || hoveredWidget === 'activity') ? '#DF9FB9' : 'rgba(20, 20, 20, 0.05)',
               boxShadow: (activeWidget === 'activity' || hoveredWidget === 'activity')
-                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(243, 184, 214, 0.35)' 
+                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(243, 184, 214, 0.35)'
                 : '0 4px 6px -1px rgba(20, 20, 20, 0.02)'
             }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -912,13 +1253,13 @@ export default function App() {
             {/* Active Badge */}
             <AnimatePresence>
               {activeWidget === 'activity' && (
-                <motion.span 
+                <motion.span
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   className="absolute top-4 right-4 px-2.5 py-0.5 bg-[#141414] text-white rounded-full text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 z-20 shadow-md"
                 >
-                  <motion.span 
+                  <motion.span
                     className="w-1.5 h-1.5 rounded-full bg-[#59C28A]"
                     animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
                     transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
@@ -990,7 +1331,7 @@ export default function App() {
           </motion.div>
 
           {/* Widget 3: Green Card (Skill Development) */}
-          <motion.div 
+          <motion.div
             id="widget-skills"
             onClick={() => handleWidgetClick('skills')}
             onMouseEnter={() => setHoveredWidget('skills')}
@@ -1005,13 +1346,13 @@ export default function App() {
             animate={{
               scale: activeWidget === 'skills' ? 1.02 : (hoveredWidget === 'skills' ? 1.01 : 1),
               y: activeWidget === 'skills' ? -4 : (hoveredWidget === 'skills' ? -6 : 0),
-              opacity: activeWidget 
-                ? (activeWidget === 'skills' ? 1 : 0.75) 
+              opacity: activeWidget
+                ? (activeWidget === 'skills' ? 1 : 0.75)
                 : (hoveredWidget ? (hoveredWidget === 'skills' ? 1 : 0.75) : 1),
               borderWidth: '2px',
               borderColor: (activeWidget === 'skills' || hoveredWidget === 'skills') ? '#9CB26B' : 'rgba(20, 20, 20, 0.05)',
               boxShadow: (activeWidget === 'skills' || hoveredWidget === 'skills')
-                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(183, 200, 140, 0.35)' 
+                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(183, 200, 140, 0.35)'
                 : '0 4px 6px -1px rgba(20, 20, 20, 0.02)'
             }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -1020,13 +1361,13 @@ export default function App() {
             {/* Active Badge */}
             <AnimatePresence>
               {activeWidget === 'skills' && (
-                <motion.span 
+                <motion.span
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   className="absolute top-4 right-4 px-2.5 py-0.5 bg-[#141414] text-white rounded-full text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 z-20 shadow-md"
                 >
-                  <motion.span 
+                  <motion.span
                     className="w-1.5 h-1.5 rounded-full bg-[#59C28A]"
                     animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
                     transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
@@ -1072,7 +1413,7 @@ export default function App() {
           </motion.div>
 
           {/* Widget 4: Blue Card (Employee Engagement) */}
-          <motion.div 
+          <motion.div
             id="widget-engagement"
             onClick={() => handleWidgetClick('engagement')}
             onMouseEnter={() => setHoveredWidget('engagement')}
@@ -1087,13 +1428,13 @@ export default function App() {
             animate={{
               scale: activeWidget === 'engagement' ? 1.02 : (hoveredWidget === 'engagement' ? 1.01 : 1),
               y: activeWidget === 'engagement' ? -4 : (hoveredWidget === 'engagement' ? -6 : 0),
-              opacity: activeWidget 
-                ? (activeWidget === 'engagement' ? 1 : 0.75) 
+              opacity: activeWidget
+                ? (activeWidget === 'engagement' ? 1 : 0.75)
                 : (hoveredWidget ? (hoveredWidget === 'engagement' ? 1 : 0.75) : 1),
               borderWidth: '2px',
               borderColor: (activeWidget === 'engagement' || hoveredWidget === 'engagement') ? '#9EBCE2' : 'rgba(20, 20, 20, 0.05)',
               boxShadow: (activeWidget === 'engagement' || hoveredWidget === 'engagement')
-                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(191, 214, 255, 0.35)' 
+                ? '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(191, 214, 255, 0.35)'
                 : '0 4px 6px -1px rgba(20, 20, 20, 0.02)'
             }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -1102,13 +1443,13 @@ export default function App() {
             {/* Active Badge */}
             <AnimatePresence>
               {activeWidget === 'engagement' && (
-                <motion.span 
+                <motion.span
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.8 }}
                   className="absolute top-4 right-4 px-2.5 py-0.5 bg-[#141414] text-white rounded-full text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 z-20 shadow-md"
                 >
-                  <motion.span 
+                  <motion.span
                     className="w-1.5 h-1.5 rounded-full bg-[#59C28A]"
                     animate={{ scale: [1, 1.4, 1], opacity: [1, 0.5, 1] }}
                     transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
@@ -1164,244 +1505,261 @@ export default function App() {
       {/* ========================================================
           3. RIGHT PANEL (AI Assistant, Fixed 400px Width)
          ======================================================== */}
-      <motion.aside 
+      <motion.aside
         layout
-        animate={{ 
-          width: activeWidget ? 400 : 0,
-          padding: activeWidget ? 24 : 0,
-          borderWidth: activeWidget ? 1 : 0,
-          marginLeft: activeWidget ? 24 : 0,
+        animate={{
+          width: isAiPanelOpen ? 400 : 0,
+          padding: isAiPanelOpen ? 24 : 0,
+          borderWidth: isAiPanelOpen ? 1 : 0,
+          marginLeft: isAiPanelOpen ? 24 : 0,
         }}
-        transition={{ 
-          type: "spring", 
-          stiffness: 200, 
-          damping: 24 
+        transition={{
+          type: "spring",
+          stiffness: 200,
+          damping: 24
         }}
         className="h-full bg-white border border-[#E3DCCE] rounded-[32px] flex flex-col shadow-sm relative overflow-hidden shrink-0"
       >
         <AnimatePresence mode="wait">
-          {!activeWidget ? (
-            // Clean Placeholder Panel (Initial State)
-            <motion.div
-              key="placeholder-panel"
-              initial={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              className="w-full h-full flex flex-col justify-center items-center text-center p-6 space-y-8"
-            >
-              <div className="space-y-2">
-                <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">AI Workspace</span>
-                <h3 className="text-xl font-bold text-gray-400/80">Ready</h3>
-              </div>
-              
-              <div className="flex flex-col items-center space-y-3 text-gray-400/70">
-                <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
-                  Select any analytics widget to begin analysis.
-                </p>
-                <span className="text-base font-bold text-gray-300">↓</span>
-                <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
-                  Click any widget
-                </p>
-                <span className="text-base font-bold text-gray-300">↓</span>
-                <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
-                  AI insights will appear here.
-                </p>
-              </div>
-            </motion.div>
-          ) : (
-            // Active AI Assistant Panel Workspace (Header + Conversation + Input + Footer)
-            <motion.div
-              key="active-panel"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              className="w-full h-full flex flex-col justify-between"
-            >
-              {/* Dynamic Header */}
-              <div className="pb-4 border-b border-[#E3DCCE]/40 min-h-[64px] flex flex-col justify-center">
-                <motion.div
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18 }}
-                  className="flex items-center justify-between w-full"
-                >
-                  <div className="flex items-center gap-3 w-full">
-                    <div className="w-8 h-8 rounded-lg bg-[#141414] flex items-center justify-center text-white shrink-0">
-                      <Zap className="w-4 h-4 fill-white" />
+          {isAiPanelOpen && (
+            !activeWidget ? (
+              // Clean Placeholder Panel (Initial State)
+              <motion.div
+                key="placeholder-panel"
+                initial={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.25 }}
+                className="w-full h-full flex flex-col justify-center items-center text-center p-6 space-y-8"
+              >
+                <div className="space-y-2">
+                  <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">AI Workspace</span>
+                  <h3 className="text-xl font-bold text-gray-400/80">Ready</h3>
+                </div>
+
+                <div className="flex flex-col items-center space-y-3 text-gray-400/70">
+                  <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
+                    Select any analytics widget to begin analysis.
+                  </p>
+                  <span className="text-base font-bold text-gray-300">↓</span>
+                  <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
+                    Click any widget
+                  </p>
+                  <span className="text-base font-bold text-gray-300">↓</span>
+                  <p className="text-[13px] font-semibold leading-relaxed max-w-[190px]">
+                    AI insights will appear here.
+                  </p>
+                </div>
+              </motion.div>
+            ) : (
+              // Active AI Assistant Panel Workspace (Header + Loader OR Chat)
+              <motion.div
+                key="active-panel"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.25 }}
+                className="w-full h-full flex flex-col justify-between"
+              >
+                {/* Dynamic Header */}
+                <div className="pb-4 border-b border-[#E3DCCE]/40 min-h-[64px] flex flex-col justify-center">
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="flex items-center justify-between w-full"
+                  >
+                    <div className="flex items-center gap-3 w-full">
+                      <div className="w-8 h-8 rounded-lg bg-[#141414] flex items-center justify-center text-white shrink-0">
+                        <Zap className="w-4 h-4 fill-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-[15px] font-bold text-[#141414] tracking-tight text-left">WidChat AI</h3>
+                          <div className="flex items-center gap-2">
+                            {aiState === 'analyzed' && (
+                              <div className="flex items-center gap-1.5 bg-[#59C28A]/10 px-2 py-0.5 rounded-full select-none">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#59C28A] animate-pulse" />
+                                <span className="text-[9px] font-black text-[#59C28A] uppercase tracking-wider">Live</span>
+                              </div>
+                            )}
+                            {aiState === 'analyzed' && (
+                              <button
+                                onClick={() => setIsAiPanelOpen(false)}
+                                className="text-gray-400 hover:text-[#141414] transition-colors p-1"
+                                aria-label="Close AI panel"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {aiState === 'analyzed' && (
+                          <div className="flex items-center gap-2 mt-2">
+                            <div id="ai-chip-target" className="inline-flex items-center">
+                              <span
+                                className="text-[10px] font-bold text-[#141414] px-2.5 py-0.5 rounded-full inline-flex items-center uppercase tracking-wide border border-black/5"
+                                style={{ backgroundColor: getWidgetColor(activeWidget) }}
+                              >
+                                {getWidgetLabel(activeWidget)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-[15px] font-bold text-[#141414] tracking-tight">WidChat AI</h3>
-                        <div className="flex items-center gap-1.5 bg-[#59C28A]/10 px-2 py-0.5 rounded-full select-none">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#59C28A] animate-pulse" />
-                          <span className="text-[9px] font-black text-[#59C28A] uppercase tracking-wider">Live</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 mt-2">
-                        <div id="ai-chip-target" className="inline-flex items-center">
-                          <span 
-                            className="text-[10px] font-bold text-[#141414] px-2.5 py-0.5 rounded-full inline-flex items-center uppercase tracking-wide border border-black/5"
-                            style={{ backgroundColor: getWidgetColor(activeWidget) }}
-                          >
-                            {getWidgetLabel(activeWidget)}
-                          </span>
-                        </div>
-                      </div>
+                  </motion.div>
+                </div>
+
+                {aiState !== 'analyzed' ? (
+                  // Full-height loading screen
+                  <div className="flex-1 flex flex-col items-center justify-center bg-white">
+                    <div className="relative w-[64px] h-[64px] flex items-center justify-center">
+                      <svg className="animate-premium-spin w-[64px] h-[64px] filter drop-shadow-[0_0_8px_rgba(30,86,255,0.35)]" viewBox="0 0 50 50">
+                        <defs>
+                          <linearGradient id="blue-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stopColor="#1E56FF" stopOpacity="1" />
+                            <stop offset="50%" stopColor="#6C8DFF" stopOpacity="0.8" />
+                            <stop offset="100%" stopColor="#BFD6FF" stopOpacity="0.1" />
+                          </linearGradient>
+                        </defs>
+                        <circle
+                          cx="25"
+                          cy="25"
+                          r="20"
+                          fill="none"
+                          stroke="url(#blue-grad)"
+                          strokeWidth="4"
+                          strokeLinecap="round"
+                          strokeDasharray="80 150"
+                        />
+                      </svg>
                     </div>
                   </div>
-                </motion.div>
-              </div>
-
-              {/* Main Content Area (Syncing, Thinking, Generating, Analyzed states) */}
-              <div className="flex-1 overflow-y-auto pr-1 scrollbar-thin my-4 flex flex-col justify-start relative">
-                <AnimatePresence mode="wait">
-                  {aiState === 'syncing' && (
-                    <motion.div 
-                      key="state-syncing"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="w-full flex-1 flex flex-col justify-center items-center p-6 space-y-4"
+                ) : (
+                  // Chat Conversation Area (Main Content + Input Area & Clear Context Actions)
+                  <>
+                    {/* Main Content Area */}
+                    <div
+                      ref={chatContainerRef}
+                      onScroll={handleScroll}
+                      className="flex-1 overflow-y-auto pr-1 scrollbar-thin my-4 flex flex-col justify-start relative space-y-6 text-left"
                     >
-                      <div className="w-full max-w-[200px] h-[3px] bg-gray-100 rounded-full overflow-hidden relative">
-                        <motion.div 
-                          className="h-full bg-[#141414] rounded-full"
-                          initial={{ left: "-100%", width: "50%", position: "absolute" }}
-                          animate={{ left: "100%" }}
-                          transition={{ repeat: Infinity, duration: 1.2, ease: "easeInOut" }}
-                        />
-                      </div>
-                      <div className="text-[12px] font-medium text-gray-400 tracking-wide">
-                        Synchronizing widget context...
-                      </div>
-                    </motion.div>
-                  )}
+                      {sessions[activeWidget]?.conversation.map((msg, index) => {
+                        if (msg.sender === 'user') {
+                          return (
+                            <motion.div
+                              key={`msg-${index}`}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.3 }}
+                              className="flex flex-col items-start w-full text-left"
+                            >
+                              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">You</span>
+                              <div className="text-[13px] text-gray-700 font-medium leading-relaxed mt-1.5 bg-gray-50 rounded-2xl px-4 py-2.5 border border-gray-100 max-w-[90%]">
+                                {msg.text}
+                              </div>
+                            </motion.div>
+                          );
+                        } else {
+                          return (
+                            <motion.div
+                              key={`msg-${index}`}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ duration: 0.3 }}
+                              className="flex flex-col items-start w-full text-left space-y-4"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-[#141414] uppercase tracking-widest">WidChat AI</span>
+                                <span className="w-1 h-1 rounded-full bg-[#59C28A]" />
+                              </div>
+                              <div className="text-[13px] text-gray-600 font-medium leading-relaxed bg-[#F8F4EE] rounded-2xl px-4 py-2.5 border border-[#E3DCCE]/40 max-w-[90%]">
+                                {msg.text}
+                              </div>
+                              {msg.isInsightCard && (
+                                <motion.div
+                                  variants={cardVariants}
+                                  initial="hidden"
+                                  animate="show"
+                                  className="w-full"
+                                  transition={{ delayChildren: 0.2 }}
+                                >
+                                  {renderInsightCard(activeWidget)}
+                                </motion.div>
+                              )}
+                            </motion.div>
+                          );
+                        }
+                      })}
 
-                  {aiState === 'thinking' && (
-                    <motion.div 
-                      key="state-thinking"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="w-full flex-1 flex flex-col justify-center items-center p-6 space-y-3"
-                    >
-                      <div className="text-[12px] font-medium text-gray-400 tracking-wide">
-                        Analyzing {getWidgetLabel(activeWidget)}...
-                      </div>
-                      <TypingIndicator />
-                    </motion.div>
-                  )}
-
-                  {aiState === 'generating' && (
-                    <motion.div 
-                      key="state-generating"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="w-full flex-1 flex flex-col justify-center items-center p-6 space-y-3"
-                    >
-                      <div className="text-[12px] font-medium text-gray-400 tracking-wide">
-                        Generating insights...
-                      </div>
-                      <div className="flex items-center gap-1 text-[13px] text-gray-400 font-mono font-medium">
-                        <span>Formulating response</span>
-                        <span className="w-1.5 h-3.5 bg-gray-400 inline-block cursor-blink" />
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {aiState === 'analyzed' && (
-                    <motion.div 
-                      key="state-analyzed"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="w-full flex-1 flex flex-col justify-start space-y-6"
-                    >
-                      {/* User Message */}
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.4, ease: "easeOut", delay: 0.1 }}
-                        className="flex flex-col items-start w-full text-left"
-                      >
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">You</span>
-                        <div className="text-[13px] text-gray-700 font-medium leading-relaxed mt-1.5">
-                          {getUserQuestion(activeWidget)}
-                        </div>
-                      </motion.div>
-
-                      {/* AI Message */}
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.4, ease: "easeOut", delay: 0.5 }}
-                        className="flex flex-col items-start w-full text-left space-y-4"
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold text-[#141414] uppercase tracking-widest">WidChat AI</span>
-                          <span className="w-1 h-1 rounded-full bg-[#59C28A]" />
-                        </div>
-                        <div className="text-[13px] text-gray-600 font-medium leading-relaxed">
-                          Here is the active {getWidgetLabel(activeWidget)} context:
-                        </div>
-
+                      {/* Typing Indicator */}
+                      {isAiTyping && (
                         <motion.div
-                          variants={cardVariants}
-                          initial="hidden"
-                          animate="show"
-                          className="w-full"
-                          transition={{ delayChildren: 0.8 }}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex flex-col items-start w-full text-left space-y-2"
                         >
-                          {renderInsightCard(activeWidget)}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-[#141414] uppercase tracking-widest">WidChat AI</span>
+                            <span className="w-1 h-1 rounded-full bg-[#59C28A] animate-pulse" />
+                          </div>
+                          <div className="flex items-center gap-1.5 px-4 py-3 bg-[#F8F4EE] rounded-2xl border border-[#E3DCCE]/40">
+                            <span className="w-1.5 h-1.5 bg-[#141414] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                            <span className="w-1.5 h-1.5 bg-[#141414] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                            <span className="w-1.5 h-1.5 bg-[#141414] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          </div>
                         </motion.div>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+                      )}
+                    </div>
 
-              {/* Bottom input area & bar menu */}
-              <div className="space-y-4 pt-2">
-                {/* Ask input panel */}
-                <div className="flex items-center gap-3 bg-[#F8F4EE] border border-[#E3DCCE] rounded-xl px-4 h-12 shadow-sm focus-within:ring-2 focus-within:ring-[#141414] focus-within:ring-offset-2 transition-all">
-                  <input
-                    type="text"
-                    placeholder={getInputPlaceholder()}
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    disabled={aiState !== 'analyzed'}
-                    className="flex-1 bg-transparent outline-none text-[13px] text-[#141414] font-medium px-1 placeholder-gray-400/80 h-full disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
-                    disabled={aiState !== 'analyzed'}
-                    className="text-gray-400 hover:text-[#141414] transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
-                    aria-label="Send query"
-                  >
-                    <Send className="w-4.5 h-4.5" />
-                  </motion.button>
-                </div>
+                    {/* Bottom input area & bar menu */}
+                    <div className="space-y-4 pt-2">
+                      {/* Ask input panel */}
+                      <div className="flex items-center gap-3 bg-[#F8F4EE] border border-[#E3DCCE] rounded-xl px-4 h-12 shadow-sm focus-within:ring-2 focus-within:ring-[#141414] focus-within:ring-offset-2 transition-all">
+                        <input
+                          type="text"
+                          placeholder={getInputPlaceholder()}
+                          value={inputText}
+                          onChange={(e) => handleInputChange(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSendMessage();
+                            }
+                          }}
+                          disabled={aiState !== 'analyzed'}
+                          className="flex-1 bg-transparent outline-none text-[13px] text-[#141414] font-medium px-1 placeholder-gray-400/80 h-full disabled:opacity-50 disabled:cursor-not-allowed"
+                        />
+                        <motion.button
+                          whileTap={{ scale: 0.95 }}
+                          onClick={handleSendMessage}
+                          disabled={aiState !== 'analyzed'}
+                          className="text-gray-400 hover:text-[#141414] transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                          aria-label="Send query"
+                        >
+                          <Send className="w-5 h-5" />
+                        </motion.button>
+                      </div>
 
-                {/* Desktop Utility Footer Action */}
-                <div className="flex flex-col items-center pt-3 border-t border-[#E3DCCE]/40">
-                  <button
-                    onClick={handleResetConversation}
-                    className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 hover:text-red-500 transition-colors py-1 px-3 focus:outline-none"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                    </svg>
-                    <span>Clear Context</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
+                      {/* Desktop Utility Footer Action */}
+                      <div className="flex flex-col items-center pt-3 border-t border-[#E3DCCE]/40">
+                        <button
+                          onClick={handleResetConversation}
+                          className="flex items-center gap-1.5 text-[11px] font-bold text-gray-400 hover:text-red-500 transition-colors py-1 px-3 focus:outline-none"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                          </svg>
+                          <span>Clear Context</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            )
           )}
         </AnimatePresence>
       </motion.aside>
@@ -1430,18 +1788,18 @@ export default function App() {
             onAnimationComplete={() => {
               setAnimatingChip(null);
               setAiState('syncing');
-              
+
               // Synchronizing widget context... (300ms)
               setTimeout(() => {
                 setAiState('thinking');
-                
+
                 // Typing indicator (350ms)
                 setTimeout(() => {
                   setAiState('generating');
-                  
+
                   // Generating insights... (350ms)
                   setTimeout(() => {
-                    setAiState('analyzed');
+                    completeInitialization(activeWidget!);
                   }, 350);
                 }, 350);
               }, 300);
