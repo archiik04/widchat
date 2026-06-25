@@ -1,32 +1,53 @@
-# React + TypeScript + Vite
+# WidChat – AI Learning Analytics Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+WidChat is a premium, manager-facing enterprise analytics dashboard that incorporates a persistent AI workspace (similar to ChatGPT, Claude, and Notion AI). It enables L&D managers to monitor employee learning metrics and interactively query live datasets without losing state.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 Key Features
 
-## React Compiler
+### 1. Persistent State Management
+- **Seamless Session Rehydration**: Selected widgets, open side panels, conversation logs, and draft inputs survive page refreshes and browser reloads without layout flashing.
+- **Independent Context Streams**: Each analytics widget maintains its own isolated conversation history and draft inputs. Switching between widgets preserves and re-aligns their states instantly.
+- **Debounced Scroll Preservation**: The application automatically tracks and restores your exact scrolling position inside the active chat thread.
+- **Explicit Context Purging**: A **Clear Context** button lets users purge the browser storage cache and return the assistant to its first-visit onboarding state.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. High-Fidelity Bento Grid Analytics Widgets
+Four specialized widgets display live data metrics:
+1. **Learning Progress**: Tracks completion rates with weekly SVG trend sparklines.
+2. **Course Activity**: Summarizes peak hour learners and average sessions.
+3. **Skill Development**: Identifies certifications and priority gaps.
+4. **Employee Engagement**: Tracks quarterly retention streaks and average learning days.
 
-## Expanding the Oxlint configuration
+### 3. Dynamic Selection Interactions
+- **Context Chip Transition**: Clicking any card spawns a capsule representing the widget's label, theme color, and icon, which flies dynamically along a spring cubic bezier path and lands directly inside the assistant panel's target.
+- **Interactive Chat Log**: Custom prompt keyword parsing generates structured widget recommendations, complete with embedded visual summary cards and operational buttons.
+- **Bouncing-Dot Typing Indicator**: Emulates real-time processing lag during query processing.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+---
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+## 🛠️ Installation & Setup
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+1. **Clone & Install Dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Run Local Development Server**:
+   ```bash
+   npm run dev
+   ```
+   *The application will launch on [http://localhost:5173](http://localhost:5173)*
+
+3. **Verify Build Compilation**:
+   ```bash
+   npm run build
+   ```
+
+---
+
+## 📂 Project Structure
+
+- `src/App.tsx` - Core application component containing state rehydration logic, interactive chat handlers, visual components, layout markup, and Framer Motion spring configurations.
+- `index.html` - Application entry point.
+- `design.md` - Technical design documentation addressing selection indicators, context transfers, and visual rendering structures.
