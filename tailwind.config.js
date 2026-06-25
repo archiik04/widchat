@@ -24,6 +24,10 @@ export default {
       boxShadow: {
         'soft': '0 4px 20px -2px rgba(20, 20, 20, 0.02), 0 2px 8px -1px rgba(20, 20, 20, 0.01)',
         'premium': '0 10px 30px -5px rgba(20, 20, 20, 0.03), 0 4px 12px -2px rgba(20, 20, 20, 0.02)',
+        'glow-yellow': '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(247, 216, 93, 0.35)',
+        'glow-pink': '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(243, 184, 214, 0.35)',
+        'glow-green': '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(183, 200, 140, 0.35)',
+        'glow-blue': '0 12px 25px -4px rgba(20, 20, 20, 0.08), 0 0 20px 4px rgba(191, 214, 255, 0.35)',
       },
       fontFamily: {
         sans: ['"Outfit"', '"Inter"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
