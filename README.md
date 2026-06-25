@@ -2,9 +2,8 @@
 
 WidChat is a premium, manager-facing enterprise analytics dashboard that incorporates a persistent AI workspace (similar to ChatGPT, Claude, and Notion AI). It enables L&D managers to monitor employee learning metrics and interactively query live datasets without losing state.
 
----
 
-## 🚀 Key Features
+## Key Features
 
 ### 1. Persistent State Management
 - **Seamless Session Rehydration**: Selected widgets, open side panels, conversation logs, and draft inputs survive page refreshes and browser reloads without layout flashing.
@@ -24,9 +23,8 @@ Four specialized widgets display live data metrics:
 - **Interactive Chat Log**: Custom prompt keyword parsing generates structured widget recommendations, complete with embedded visual summary cards and operational buttons.
 - **Bouncing-Dot Typing Indicator**: Emulates real-time processing lag during query processing.
 
----
 
-## 🛠️ Installation & Setup
+## Installation & Setup
 
 1. **Clone & Install Dependencies**:
    ```bash
@@ -44,9 +42,8 @@ Four specialized widgets display live data metrics:
    npm run build
    ```
 
----
 
-## 📂 Project Structure
+## Project Structure
 
 - `src/App.tsx` - Core application component containing state rehydration logic, interactive chat handlers, visual components, layout markup, and Framer Motion spring configurations.
 - `index.html` - Application entry point.
