@@ -355,6 +355,31 @@ export default function App() {
     setAiState('analyzed');
   };
 
+  const handleContextTransferComplete = (widgetId: string) => {
+    const session = sessions[widgetId];
+    if (session && session.hasInitialized) {
+      setAiState('analyzed');
+      setInputText(session.inputValue || '');
+      // Restore scroll position
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = session.scrollPosition;
+        }
+      }, 50);
+    } else {
+      setAiState('syncing');
+      setTimeout(() => {
+        setAiState('thinking');
+        setTimeout(() => {
+          setAiState('generating');
+          setTimeout(() => {
+            completeInitialization(widgetId);
+          }, 350);
+        }, 350);
+      }, 300);
+    }
+  };
+
   // Flying Chip Overlay Coordinates
   const [animatingChip, setAnimatingChip] = useState<{
     label: string;
@@ -369,22 +394,11 @@ export default function App() {
 
   // Widget Click Actions
   const handleWidgetClick = (widgetId: string) => {
-    if (activeWidget === widgetId) {
-      setIsAiPanelOpen(true);
+    if (activeWidget === widgetId && isAiPanelOpen) {
       return;
     }
 
-    // Check if the session is already initialized
-    const session = sessions[widgetId];
-    if (session && session.hasInitialized) {
-      setActiveWidget(widgetId);
-      setIsAiPanelOpen(true);
-      setAiState('analyzed');
-      setInputText(session.inputValue || '');
-      return;
-    }
-
-    // Set target state to flying
+    // Always trigger the flying chip and open the panel
     setActiveWidget(widgetId);
     setIsAiPanelOpen(true);
     setAiState('flying');
@@ -410,18 +424,9 @@ export default function App() {
         });
       } else {
         // Fallback animation flow if DOM elements are missing
-        setAiState('syncing');
-        setTimeout(() => {
-          setAiState('thinking');
-          setTimeout(() => {
-            setAiState('generating');
-            setTimeout(() => {
-              completeInitialization(widgetId);
-            }, 350);
-          }, 350);
-        }, 300);
+        handleContextTransferComplete(widgetId);
       }
-    }, 40);
+    }, 80);
   };
 
   const handleSendMessage = () => {
@@ -1574,7 +1579,7 @@ export default function App() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <h3 className="text-[15px] font-bold text-[#141414] tracking-tight text-left">WidChat AI</h3>
+                          <h3 id="ai-chip-target" className="text-[15px] font-bold text-[#141414] tracking-tight text-left">WidChat AI</h3>
                           <div className="flex items-center gap-2">
                             {aiState === 'analyzed' && (
                               <div className="flex items-center gap-1.5 bg-[#59C28A]/10 px-2 py-0.5 rounded-full select-none">
@@ -1597,7 +1602,7 @@ export default function App() {
                         </div>
                         {aiState === 'analyzed' && (
                           <div className="flex items-center gap-2 mt-2">
-                            <div id="ai-chip-target" className="inline-flex items-center">
+                            <div className="inline-flex items-center">
                               <span
                                 className="text-[10px] font-bold text-[#141414] px-2.5 py-0.5 rounded-full inline-flex items-center uppercase tracking-wide border border-black/5"
                                 style={{ backgroundColor: getWidgetColor(activeWidget) }}
@@ -1787,22 +1792,7 @@ export default function App() {
             }}
             onAnimationComplete={() => {
               setAnimatingChip(null);
-              setAiState('syncing');
-
-              // Synchronizing widget context... (300ms)
-              setTimeout(() => {
-                setAiState('thinking');
-
-                // Typing indicator (350ms)
-                setTimeout(() => {
-                  setAiState('generating');
-
-                  // Generating insights... (350ms)
-                  setTimeout(() => {
-                    completeInitialization(activeWidget!);
-                  }, 350);
-                }, 350);
-              }, 300);
+              handleContextTransferComplete(activeWidget!);
             }}
             style={{
               position: 'fixed',
